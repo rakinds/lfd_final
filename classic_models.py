@@ -8,26 +8,22 @@ Available command-line options:
 -d Define the dev / test file to use. Uses data/dev.tsv defuault
 -p Displays a plotted version of the confusion matrix for the report. May not always work
                              from the commandline if display packages are not installed.
+-a Augmented: run the NB model with augmented features
 
 Baseline usage:
-python classic_models.py
+python3 classic_models.py
 
 How to run best model:
-
+python3 classic_models.py -a
 
 """
 
 import argparse
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.svm import SVC, LinearSVC
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-from sklearn.model_selection import GridSearchCV
 import matplotlib.pyplot as plt
 from collections import Counter
 
@@ -42,6 +38,8 @@ def create_arg_parser():
     parser.add_argument("-p", "--plot_show", action="store_true",
                         help="Displays a plotted version of the confusion matrix for the report. May not always work"
                              "from the commandline if display packages are not installed.")
+    parser.add_argument("-a", "--augmented", action="store_true",
+                        help="Use the augmented feature set for better performance")
 
     return parser.parse_args()
 
@@ -56,7 +54,7 @@ def read_corpus(corpus_file):
             documents.append(tokens[0])
             labels.append(tokens[1])
 
-    print('*** Label Distribution')
+    print('*** Label Distribution ' + corpus_file + ' ***')
     print(Counter(labels))
     return documents, labels
 
@@ -66,7 +64,7 @@ def print_evaluation(Y_test, Y_pred):
     prints evaluation measures (a classification report
     and confusion matrix)"""
     print('\n*** CLASSIFICATION REPORT ***')
-    print(classification_report(Y_test, Y_pred))
+    print(classification_report(Y_test, Y_pred, digits=3))
 
     labels = ['NOT', 'OFF']
     print('\n*** CONFUSION MATRIX ***')
@@ -89,7 +87,7 @@ def identity(inp):
 
 def train_and_evaluate(vec, X_train, Y_train, X_test, Y_test):
     """Trains and evaluates the NB classifier"""
-    classifier = Pipeline([('vec', vec), ('cls', MultinomialNB(alpha=0.5))])
+    classifier = Pipeline([('vec', vec), ('cls', MultinomialNB(alpha=0.7))])
     classifier.fit(X_train, Y_train)
 
     Y_pred = classifier.predict(X_test)
@@ -107,6 +105,9 @@ if __name__ == "__main__":
     X_test, Y_test = read_corpus(args.dev_file)
 
     # Choose vectorizer and features with hyperparameters for tuning
-    vec = CountVectorizer(preprocessor=identity, tokenizer=identity)
+    if args.augmented:
+        vec = CountVectorizer(min_df=0.0007, max_df=0.89)
+    else:
+        vec = CountVectorizer()
 
     train_and_evaluate(vec, X_train, Y_train, X_test, Y_test)
