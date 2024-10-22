@@ -4,16 +4,13 @@
 """
 LfD Final Assignment - LSTM models
 
-This script allows the user to run an LSTM classifier.
+This script allows the user to run an LSTM classifier on a binary classification task.
 
 Available command-line options:
--i
--d
--t
--e
-
-Usage example:
-
+-i  Input file to learn from (default data/train.tsv)
+-d  Separate dev set to read in (default data/dev.tsv)
+-t  If added, use trained model to predict on test set
+-e  Embedding file we are using (default data/glove.6B.50d.txt)
 
 How to run the best configuration:
 
@@ -31,6 +28,8 @@ from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelBinarizer
 from tensorflow.keras.optimizers import SGD, RMSprop
 from tensorflow.keras.layers import TextVectorization
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 import tensorflow as tf
 # Make reproducible as much as possible
 np.random.seed(1234)
@@ -40,39 +39,39 @@ python_random.seed(1234)
 
 def create_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--train_file", default='train.txt', type=str,
-                        help="Input file to learn from (default train.txt)")
-    parser.add_argument("-d", "--dev_file", type=str, default='dev.txt',
-                        help="Separate dev set to read in (default dev.txt)")
+    parser.add_argument("-i", "--train_file", default='data/train.tsv', type=str,
+                        help="Input file to learn from (default data/train.tsv)")
+    parser.add_argument("-d", "--dev_file", type=str, default='data/dev.tsv',
+                        help="Separate dev set to read in (default data/dev.tsv)")
     parser.add_argument("-t", "--test_file", type=str,
                         help="If added, use trained model to predict on test set")
-    parser.add_argument("-e", "--embeddings", default='glove_reviews.json', type=str,
-                        help="Embedding file we are using (default glove_reviews.json)")
+    parser.add_argument("-e", "--embeddings", default='data/glove.6B.50d.txt', type=str,
+                        help="Embedding file we are using (default data/glove.6B.50d.txt)")
     args = parser.parse_args()
     return args
 
 
 def read_corpus(corpus_file):
-    '''Read in review data set and returns docs and labels'''
-    documents = []
-    labels = []
+    """Read in data set and returns docs and labels"""
+    documents, labels = [], []
     with open(corpus_file, encoding='utf-8') as f:
         for line in f:
-            tokens = line.strip()
-            documents.append(" ".join(tokens.split()[3:]).strip())
-            # 6-class problem: books, camera, dvd, health, music, software
-            labels.append(tokens.split()[0])
+            tokens = line.strip().split('\t')
+            documents.append(tokens[0])
+            labels.append(tokens[1])
+
     return documents, labels
 
 
 def read_embeddings(embeddings_file):
-    '''Read in word embeddings from file and save as numpy array'''
-    embeddings = json.load(open(embeddings_file, 'r'))
-    return {word: np.array(embeddings[word]) for word in embeddings}
+    """Read in word embeddings from file and save as numpy array"""
+    with open(embeddings_file, 'r') as f:
+        embeddings = f.readlines()
+    return {line.split()[0]: np.array(line.split()[1:]) for line in embeddings}
 
 
 def get_emb_matrix(voc, emb):
-    '''Get embedding matrix given vocab and the embeddings'''
+    """Get embedding matrix given vocab and the embeddings"""
     num_tokens = len(voc) + 2
     word_index = dict(zip(voc, range(len(voc))))
     # Bit hacky, get embedding dimension from the word "the"
@@ -89,34 +88,36 @@ def get_emb_matrix(voc, emb):
 
 
 def create_model(Y_train, emb_matrix):
-    '''Create the Keras model to use'''
+    """Create an LSTM model using Keras"""
     # Define settings, you might want to create cmd line args for them
-    learning_rate = 0.01
-    loss_function = 'categorical_crossentropy'
-    optim = SGD(learning_rate=learning_rate)
+    learning_rate = 0.005
+    loss_function = 'binary_crossentropy'
+    optim = RMSprop(learning_rate=learning_rate)
     # Take embedding dim and size from emb_matrix
     embedding_dim = len(emb_matrix[0])
-    print(embedding_dim)
+
     num_tokens = len(emb_matrix)
     num_labels = len(set(Y_train))
+
     # Now build the model
     model = Sequential()
     model.add(Embedding(num_tokens, embedding_dim, embeddings_initializer=Constant(emb_matrix), trainable=False))
-    # Here you should add LSTM layers (and potentially dropout)
-    model.add(LSTM(units=num_labels, activation="elu"))
-    # Ultimately, end with dense layer with softmax
-    model.add(Dense(input_dim=embedding_dim, units=num_labels, activation="softmax"))
+
+    # LSTM layers
+    model.add(LSTM(units=num_labels, dropout=0.5, activation="elu"))
+
     # Compile model using our settings, check for accuracy
+    model.add(Dense(1, activation='sigmoid'))
     model.compile(loss=loss_function, optimizer=optim, metrics=['accuracy'])
     return model
 
 
-def train_model(model, X_train, Y_train, X_dev, Y_dev):
-    '''Train the model here. Note the different settings you can experiment with!'''
+def train_model(model, X_train, Y_train, X_dev, Y_dev, encoder):
+    """Train the model here. Note the different settings you can experiment with!"""
     # Potentially change these to cmd line args again
     # And yes, don't be afraid to experiment!
     verbose = 1
-    batch_size = 8
+    batch_size = 32
     epochs = 50
     # Early stopping: stop training when there are three consecutive epochs without improving
     # It's also possible to monitor the training loss with monitor="loss"
@@ -124,23 +125,46 @@ def train_model(model, X_train, Y_train, X_dev, Y_dev):
     # Finally fit the model to our data
     model.fit(X_train, Y_train, verbose=verbose, epochs=epochs, callbacks=[callback], batch_size=batch_size, validation_data=(X_dev, Y_dev))
     # Print final accuracy for the model (clearer overview)
-    test_set_predict(model, X_dev, Y_dev, "dev")
+    test_set_predict(model, X_dev, Y_dev, "dev", encoder)
     return model
 
 
-def test_set_predict(model, X_test, Y_test, ident):
-    '''Do predictions and measure accuracy on our own test set (that we split off train)'''
+def test_set_predict(model, X_test, Y_test, ident, encoder):
+    """Do predictions and measure accuracy on our own test set (that we split off train)"""
     # Get predictions using the trained model
     Y_pred = model.predict(X_test)
+
     # Finally, convert to numerical labels to get scores with sklearn
-    Y_pred = np.argmax(Y_pred, axis=1)
+    Y_pred = (Y_pred > 0.5).astype("int32")
     # If you have gold data, you can calculate accuracy
-    Y_test = np.argmax(Y_test, axis=1)
+    Y_test = (Y_test > 0.5).astype("int32")
     print('Accuracy on own {1} set: {0}'.format(round(accuracy_score(Y_test, Y_pred), 3), ident))
 
+    # Print detailed results
+    print_evaluation(Y_test, Y_pred, encoder)
+
+
+def print_evaluation(Y_test, Y_pred, encoder):
+    """Takes true labels and predicted labels and
+    prints evaluation measures (a classification report
+    and confusion matrix)"""
+    labels = encoder.classes_
+
+    print('\n*** CLASSIFICATION REPORT ***')
+    print(classification_report(Y_test, Y_pred))
+
+    print('\n*** CONFUSION MATRIX ***')
+    cm = confusion_matrix(Y_test, Y_pred)
+    print(' '.join(labels))
+    print(cm)
+
+    # Pretty confusion matrix
+    #disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels)
+    #disp.plot(cmap=plt.cm.Blues)
+    #plt.show()
 
 def main():
-    '''Main function to train and test neural network given cmd line arguments'''
+    """Main function to train and test neural network given cmd line arguments"""
     args = create_arg_parser()
 
     # Read in the data and embeddings
@@ -170,7 +194,7 @@ def main():
     X_dev_vect = vectorizer(np.array([[s] for s in X_dev])).numpy()
 
     # Train the model
-    model = train_model(model, X_train_vect, Y_train_bin, X_dev_vect, Y_dev_bin)
+    model = train_model(model, X_train_vect, Y_train_bin, X_dev_vect, Y_dev_bin, encoder)
 
     # Do predictions on specified test set
     if args.test_file:
@@ -179,7 +203,7 @@ def main():
         Y_test_bin = encoder.fit_transform(Y_test)
         X_test_vect = vectorizer(np.array([[s] for s in X_test])).numpy()
         # Finally do the predictions
-        test_set_predict(model, X_test_vect, Y_test_bin, "test")
+        test_set_predict(model, X_test_vect, Y_test_bin, "test", encoder)
 
 
 if __name__ == '__main__':
