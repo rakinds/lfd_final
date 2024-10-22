@@ -103,7 +103,7 @@ def create_model(Y_train, emb_matrix):
     model.add(Embedding(num_tokens, embedding_dim, embeddings_initializer=Constant(emb_matrix), trainable=False))
 
     # LSTM layers
-    model.add(Bidirectional(LSTM(units=num_labels, dropout=0.4, activation="elu")))
+    model.add(Bidirectional(LSTM(units=num_labels, dropout=0.45, activation="elu")))
 
     # Compile model using our settings, check for accuracy
     model.add(Dense(1, activation='sigmoid'))
