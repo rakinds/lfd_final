@@ -18,11 +18,10 @@ How to run the best configuration:
 """
 
 import random as python_random
-import json
 import argparse
 import numpy as np
 from keras.models import Sequential
-from keras.layers import Dense, Embedding, LSTM
+from keras.layers import Dense, Embedding, LSTM, Bidirectional
 from keras.initializers import Constant
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelBinarizer
@@ -45,7 +44,7 @@ def create_arg_parser():
                         help="Separate dev set to read in (default data/dev.tsv)")
     parser.add_argument("-t", "--test_file", type=str,
                         help="If added, use trained model to predict on test set")
-    parser.add_argument("-e", "--embeddings", default='data/glove.6B.50d.txt', type=str,
+    parser.add_argument("-e", "--embeddings", default='data/cc.en.300.vec', type=str,
                         help="Embedding file we are using (default data/glove.6B.50d.txt)")
     args = parser.parse_args()
     return args
@@ -89,8 +88,8 @@ def get_emb_matrix(voc, emb):
 
 def create_model(Y_train, emb_matrix):
     """Create an LSTM model using Keras"""
-    # Define settings, you might want to create cmd line args for them
-    learning_rate = 0.005
+    # Define settings
+    learning_rate = 0.001
     loss_function = 'binary_crossentropy'
     optim = RMSprop(learning_rate=learning_rate)
     # Take embedding dim and size from emb_matrix
@@ -104,7 +103,7 @@ def create_model(Y_train, emb_matrix):
     model.add(Embedding(num_tokens, embedding_dim, embeddings_initializer=Constant(emb_matrix), trainable=False))
 
     # LSTM layers
-    model.add(LSTM(units=num_labels, dropout=0.5, activation="elu"))
+    model.add(Bidirectional(LSTM(units=num_labels, dropout=0.4, activation="elu")))
 
     # Compile model using our settings, check for accuracy
     model.add(Dense(1, activation='sigmoid'))
@@ -114,17 +113,15 @@ def create_model(Y_train, emb_matrix):
 
 def train_model(model, X_train, Y_train, X_dev, Y_dev, encoder):
     """Train the model here. Note the different settings you can experiment with!"""
-    # Potentially change these to cmd line args again
-    # And yes, don't be afraid to experiment!
+    # Hyperparams
     verbose = 1
     batch_size = 32
     epochs = 50
     # Early stopping: stop training when there are three consecutive epochs without improving
-    # It's also possible to monitor the training loss with monitor="loss"
     callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3)
     # Finally fit the model to our data
     model.fit(X_train, Y_train, verbose=verbose, epochs=epochs, callbacks=[callback], batch_size=batch_size, validation_data=(X_dev, Y_dev))
-    # Print final accuracy for the model (clearer overview)
+    # Print final accuracy for the model
     test_set_predict(model, X_dev, Y_dev, "dev", encoder)
     return model
 
@@ -135,9 +132,9 @@ def test_set_predict(model, X_test, Y_test, ident, encoder):
     Y_pred = model.predict(X_test)
 
     # Finally, convert to numerical labels to get scores with sklearn
-    Y_pred = (Y_pred > 0.5).astype("int32")
+    Y_pred = (Y_pred > 0.65).astype("int32")
     # If you have gold data, you can calculate accuracy
-    Y_test = (Y_test > 0.5).astype("int32")
+    Y_test = (Y_test > 0.65).astype("int32")
     print('Accuracy on own {1} set: {0}'.format(round(accuracy_score(Y_test, Y_pred), 3), ident))
 
     # Print detailed results
@@ -151,7 +148,7 @@ def print_evaluation(Y_test, Y_pred, encoder):
     labels = encoder.classes_
 
     print('\n*** CLASSIFICATION REPORT ***')
-    print(classification_report(Y_test, Y_pred))
+    print(classification_report(Y_test, Y_pred, digits=3))
 
     print('\n*** CONFUSION MATRIX ***')
     cm = confusion_matrix(Y_test, Y_pred)
