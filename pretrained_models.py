@@ -9,7 +9,6 @@ Available command-line options:
 -i  Input file to learn from (default data/train.tsv)
 -d  The dev set to read in (default data/dev.tsv)")
 -t  The test set to read in (default data/test.tsv)"
--e  Embedding file we are using (default data/glove.6B.50d.txt)
 
 How to run the best configuration:
 
@@ -43,8 +42,6 @@ def create_arg_parser():
                         help="The dev set to read in (default data/dev.tsv)")
     parser.add_argument("-t", "--test_file", type=str, default='data/test.tsv',
                         help="The test set to read in (default data/test.tsv)")
-    parser.add_argument("-e", "--embeddings", default='data/glove.6B.50d.txt', type=str,
-                        help="Embedding file we are using (default data/glove.6B.50d.txt)")
     args = parser.parse_args()
     return args
 
