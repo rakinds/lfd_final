@@ -44,33 +44,48 @@ def create_arg_parser():
     parser.add_argument("-a", "--augmented", action="store_true",
                         help="Use the augmented feature set for better performance")
     parser.add_argument("-m", "--mhs", action="store_true",
-                        help="Use more OFF training data")
+                        help="Use more OFF training data, MHS")
+    parser.add_argument("-e", "--hsuse", action="store_true",
+                        help="Use more OFF training data, HSUSE")
 
     return parser.parse_args()
 
 
-def create_new_data():
+def create_new_data(type):
     """Create additional offensive data"""
-    # Retrieve dataset
-    dataset = datasets.load_dataset('ucberkeley-dlab/measuring-hate-speech')
-    df = dataset['train'].to_pandas()
-
-    # Retrieve two relevant columns
-    augment_data = df[['hate_speech_score', 'text']]
-    augment_data = augment_data.values.tolist()
-
-    # Create 4000 lines of new data and save
     documents, labels = [], []
-    counter = 0
 
-    for line in augment_data:
-        if counter < 4000 and line[0] >= 0.5:
-            counter += 1
-            cleaned = re.sub('@\w+', '@USER', line[1])
-            cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
-            documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
-            labels.append('OFF')
+    if type == 'mhs':
+        # Retrieve dataset
+        dataset = datasets.load_dataset('ucberkeley-dlab/measuring-hate-speech')
+        df = dataset['train'].to_pandas()
 
+        # Retrieve two relevant columns
+        augment_data = df[['hate_speech_score', 'text']]
+        augment_data = augment_data.values.tolist()
+
+        # Create 4000 lines of new data and save
+        counter = 0
+
+        for line in augment_data:
+            if counter < 4000 and line[0] >= 0.5:
+                counter += 1
+                cleaned = re.sub('@\w+', '@USER', line[1])
+                cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                labels.append('OFF')
+
+    elif type == 'hsuse':
+        counter = 0
+        with open('data/hsus_train.tsv', encoding='utf-8') as f:
+            for line in f:
+                tokens = line.strip().split('\t')
+                if tokens[4] == 'Hateful' and counter < 4000:
+                    counter += 1
+                    cleaned = re.sub('@\w+', '@USER', tokens[0])
+                    cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                    documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                    labels.append('OFF')
     return documents, labels
 
 
@@ -134,7 +149,11 @@ if __name__ == "__main__":
 
     # Create additional OFF data if argument is given
     if args.mhs:
-        X_train_aug, Y_train_aug = create_new_data()
+        X_train_aug, Y_train_aug = create_new_data('mhs')
+        X_train = X_train + X_train_aug
+        Y_train = Y_train + Y_train_aug
+    elif args.hsuse:
+        X_train_aug, Y_train_aug = create_new_data('hsuse')
         X_train = X_train + X_train_aug
         Y_train = Y_train + Y_train_aug
 
