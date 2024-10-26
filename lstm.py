@@ -10,10 +10,8 @@ Available command-line options:
 -i  Input file to learn from (default data/train.tsv)
 -d  Separate dev set to read in (default data/dev.tsv)
 -t  If added, use trained model to predict on test set
--e  Embedding file we are using (default data/glove.6B.50d.txt)
-
-How to run the best configuration:
-
+-e  Embedding file we are using (default data/cc.en.300.vec)
+-m  Use more data (the MHS dataset)
 
 """
 
@@ -22,7 +20,6 @@ import argparse
 import numpy as np
 from keras.models import Sequential
 from keras.layers import Dense, Embedding, LSTM, Bidirectional
-from keras.initializers import Constant
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelBinarizer
 from tensorflow.keras.optimizers import SGD, RMSprop
@@ -30,6 +27,11 @@ from tensorflow.keras.layers import TextVectorization
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 import tensorflow as tf
+import string
+import datasets
+import re
+from keras.initializers import Constant
+from collections import Counter
 # Make reproducible as much as possible
 np.random.seed(1234)
 tf.random.set_seed(1234)
@@ -45,9 +47,52 @@ def create_arg_parser():
     parser.add_argument("-t", "--test_file", type=str,
                         help="If added, use trained model to predict on test set")
     parser.add_argument("-e", "--embeddings", default='data/cc.en.300.vec', type=str,
-                        help="Embedding file we are using (default data/glove.6B.50d.txt)")
+                        help="Embedding file we are using (default data/cc.en.300.vec)")
+    parser.add_argument("-m", "--mhs", action="store_true",
+                        help="Use more OFF training data, MHS")
+    parser.add_argument("--hsuse", action="store_true",
+                        help="Use more OFF training data, HSUSE")
     args = parser.parse_args()
     return args
+
+
+def create_new_data(type):
+    """Create additional offensive data"""
+    documents, labels = [], []
+
+    if type == 'mhs':
+        # Retrieve dataset
+        dataset = datasets.load_dataset('ucberkeley-dlab/measuring-hate-speech')
+        df = dataset['train'].to_pandas()
+
+        # Retrieve two relevant columns
+        augment_data = df[['hate_speech_score', 'text']]
+        augment_data = augment_data.values.tolist()
+
+        # Create 4000 lines of new data and save
+        counter = 0
+
+        for line in augment_data:
+            if counter < 4000 and line[0] >= 0.5:
+                counter += 1
+                cleaned = re.sub('@\w+', '@USER', line[1])
+                cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                labels.append('OFF')
+
+    elif type == 'hsuse':
+        counter = 0
+        with open('data/hsus_train.tsv', encoding='utf-8') as f:
+            for line in f:
+                tokens = line.strip().split('\t')
+                if tokens[4] == 'Hateful' and counter < 4000:
+                    counter += 1
+                    cleaned = re.sub('@\w+', '@USER', tokens[0])
+                    cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                    documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                    labels.append('OFF')
+    return documents, labels
+
 
 
 def read_corpus(corpus_file):
@@ -56,7 +101,7 @@ def read_corpus(corpus_file):
     with open(corpus_file, encoding='utf-8') as f:
         for line in f:
             tokens = line.strip().split('\t')
-            documents.append(tokens[0])
+            documents.append(tokens[0].translate(str.maketrans('', '', string.punctuation)))
             labels.append(tokens[1])
 
     return documents, labels
@@ -111,7 +156,7 @@ def create_model(Y_train, emb_matrix):
     return model
 
 
-def train_model(model, X_train, Y_train, X_dev, Y_dev, encoder):
+def train_model(model, X_train, Y_train, X_dev, Y_dev, encoder, args):
     """Train the model here. Note the different settings you can experiment with!"""
     # Hyperparams
     verbose = 1
@@ -122,19 +167,20 @@ def train_model(model, X_train, Y_train, X_dev, Y_dev, encoder):
     # Finally fit the model to our data
     model.fit(X_train, Y_train, verbose=verbose, epochs=epochs, callbacks=[callback], batch_size=batch_size, validation_data=(X_dev, Y_dev))
     # Print final accuracy for the model
-    test_set_predict(model, X_dev, Y_dev, "dev", encoder)
+    test_set_predict(model, X_dev, Y_dev, "dev", encoder, args)
     return model
 
 
-def test_set_predict(model, X_test, Y_test, ident, encoder):
+def test_set_predict(model, X_test, Y_test, ident, encoder, args):
     """Do predictions and measure accuracy on our own test set (that we split off train)"""
     # Get predictions using the trained model
     Y_pred = model.predict(X_test)
 
+    boundary = 0.65
+
     # Finally, convert to numerical labels to get scores with sklearn
-    Y_pred = (Y_pred > 0.65).astype("int32")
-    # If you have gold data, you can calculate accuracy
-    Y_test = (Y_test > 0.65).astype("int32")
+    Y_pred = (Y_pred > boundary).astype("int32")
+
     print('Accuracy on own {1} set: {0}'.format(round(accuracy_score(Y_test, Y_pred), 3), ident))
 
     # Print detailed results
@@ -169,6 +215,17 @@ def main():
     X_dev, Y_dev = read_corpus(args.dev_file)
     embeddings = read_embeddings(args.embeddings)
 
+    # Create additional OFF data if argument is given
+    if args.mhs:
+        X_train_aug, Y_train_aug = create_new_data('mhs')
+        X_train = X_train + X_train_aug
+        Y_train = Y_train + Y_train_aug
+    elif args.hsuse:
+        X_train_aug, Y_train_aug = create_new_data('hsuse')
+        X_train = X_train + X_train_aug
+        Y_train = Y_train + Y_train_aug
+
+    print('Train label distribution: ', Counter(Y_train))
     # Transform words to indices using a vectorizer
     vectorizer = TextVectorization(standardize=None, output_sequence_length=50)
     # Use train and dev to create vocab - could also do just train
@@ -191,7 +248,7 @@ def main():
     X_dev_vect = vectorizer(np.array([[s] for s in X_dev])).numpy()
 
     # Train the model
-    model = train_model(model, X_train_vect, Y_train_bin, X_dev_vect, Y_dev_bin, encoder)
+    model = train_model(model, X_train_vect, Y_train_bin, X_dev_vect, Y_dev_bin, encoder, args)
 
     # Do predictions on specified test set
     if args.test_file:
@@ -200,7 +257,7 @@ def main():
         Y_test_bin = encoder.fit_transform(Y_test)
         X_test_vect = vectorizer(np.array([[s] for s in X_test])).numpy()
         # Finally do the predictions
-        test_set_predict(model, X_test_vect, Y_test_bin, "test", encoder)
+        test_set_predict(model, X_test_vect, Y_test_bin, "test", encoder, args)
 
 
 if __name__ == '__main__':
