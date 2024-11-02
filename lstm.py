@@ -179,7 +179,7 @@ def test_set_predict(model, X_test, Y_test, ident, encoder, args):
     boundary = 0.65
 
     # Finally, convert to numerical labels to get scores with sklearn
-    Y_pred = (Y_pred > boundary).astype("int32")
+    Y_pred = (Y_pred > 0.5).astype("int32")
 
     print('Accuracy on own {1} set: {0}'.format(round(accuracy_score(Y_test, Y_pred), 3), ident))
 

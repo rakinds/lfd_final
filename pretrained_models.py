@@ -5,26 +5,25 @@ LfD Final Assignment - Pretrained Models
 
 This script allows the user to run several Pretrained Models on a binary classification task.
 
-Available command-line options:
--i  Input file to learn from (default data/train.tsv)
--d  The dev set to read in (default data/dev.tsv)")
--t  The test set to read in (default data/test.tsv)"
+-e Use more OFF training data, HSUSE
+-m Use more OFF training data, MHS
 
-How to run the best configuration:
-
-
+Necessary versions:
+!pip install tensorflow==2.15.0
+!pip install tf-keras==2.15.0
+!pip install transformers==4.37.0
 """
 
-import argparse
 import random
 import numpy as np
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
-import matplotlib.pyplot as plt
+import argparse
+import string
+import re
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
 from sklearn.preprocessing import LabelBinarizer
 import tensorflow as tf
 from transformers import TFAutoModelForSequenceClassification, AutoTokenizer
-from tensorflow.keras.losses import CategoricalCrossentropy
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import Adam, RMSprop
 from tensorflow.keras.callbacks import EarlyStopping, LearningRateScheduler
 
 # Make reproducible
@@ -34,128 +33,151 @@ random.seed(1234)
 
 
 def create_arg_parser():
-    """Create an ArgumentParser to parse commandline arguments."""
+    """Creates argumentparser and defines command-line options that can be called upon."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--train_file", default='data/train.tsv', type=str,
-                        help="Input file to learn from (default data/train.tsv)")
-    parser.add_argument("-d", "--dev_file", type=str, default='data/dev.tsv',
-                        help="The dev set to read in (default data/dev.tsv)")
-    parser.add_argument("-t", "--test_file", type=str, default='data/test.tsv',
-                        help="The test set to read in (default data/test.tsv)")
-    args = parser.parse_args()
-    return args
+    parser.add_argument("-m", "--mhs", action="store_true",
+                        help="Use more OFF training data, MHS")
+    parser.add_argument("-e", "--hsuse", action="store_true",
+                        help="Use more OFF training data, HSUSE")
+
+    return parser.parse_args()
+
+
+def create_new_data(type):
+    """Create additional offensive data"""
+    documents, labels = [], []
+
+    if type == 'mhs':
+        # Retrieve dataset
+        dataset = datasets.load_dataset('ucberkeley-dlab/measuring-hate-speech')
+        df = dataset['train'].to_pandas()
+
+        # Retrieve two relevant columns
+        augment_data = df[['hate_speech_score', 'text']]
+        augment_data = augment_data.values.tolist()
+
+        # Create 4000 lines of new data and save
+        counter = 0
+
+        for line in augment_data:
+            if counter < 4000 and line[0] >= 0.5:
+                counter += 1
+                cleaned = re.sub('@\w+', '@USER', line[1])
+                cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                labels.append('OFF')
+
+    elif type == 'hsuse':
+        counter = 0
+        with open('data/hsus_train.tsv', encoding='utf-8') as f:
+            for line in f:
+                tokens = line.strip().split('\t')
+                if tokens[4] == 'Hateful' and counter < 4000:
+                    counter += 1
+                    cleaned = re.sub('@\w+', '@USER', tokens[0])
+                    cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                    documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                    labels.append('OFF')
+    return documents, labels
 
 
 def read_corpus(corpus_file):
-    """Read in data set and returns docs and labels."""
+    """Define a function to read the corpus and remove punctuation"""
     documents, labels = [], []
     with open(corpus_file, encoding='utf-8') as f:
         for line in f:
             tokens = line.strip().split('\t')
-            documents.append(tokens[0])
+            doc = tokens[0].translate(str.maketrans('', '', string.punctuation))
+            documents.append(doc)
             labels.append(tokens[1])
 
     return documents, labels
 
 
+def tokenize_data(tokenizer, data, max_length):
+    """Function to tokenize data"""
+    return tokenizer(data, padding=True, max_length=max_length, truncation=True, return_tensors="np").data
+
+
+
 def lr_schedule(epoch, initial_lr=5e-5, drop=0.5, epochs_drop=5):
-    """Define a learning rate schedule."""
+    """Define a learning rate schedule function"""
     return initial_lr * (drop ** (epoch // epochs_drop))
 
 
-def experiment_with_model(tokens_train, tokens_dev, tokens_test, model_name, batch_size, epochs, Y_train_bin, Y_dev_bin,
-                          Y_test_bin, encoder):
-    """Load, train and evaluate a model."""
+def experiment_with_model(args, model_name, max_length, batch_size, epochs):
     # Load the model and tokenizer
-    model = TFAutoModelForSequenceClassification.from_pretrained(model_name, num_labels=6)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = TFAutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
+
+    # Read the data
+    X_train, Y_train = read_corpus('data/train.tsv')
+    X_dev, Y_dev = read_corpus('data/dev.tsv')
+    X_test, Y_test = read_corpus('data/test.tsv')
+
+    # Create additional OFF data if argument is given
+    if args.mhs:
+        X_train_aug, Y_train_aug = create_new_data('mhs')
+        X_train = X_train + X_train_aug
+        Y_train = Y_train + Y_train_aug
+    elif args.hsuse:
+        X_train_aug, Y_train_aug = create_new_data('hsuse')
+        X_train = X_train + X_train_aug
+        Y_train = Y_train + Y_train_aug
+
+    # Transform string labels to one-hot encodings
+    encoder = LabelBinarizer()
+    Y_train_bin = encoder.fit_transform(Y_train)
+    Y_dev_bin = encoder.fit_transform(Y_dev)
+    Y_test_bin = encoder.fit_transform(Y_test)
+
+    # Tokenize the data
+    tokens_train = tokenize_data(tokenizer, X_train, max_length)
+    tokens_dev = tokenize_data(tokenizer, X_dev, max_length)
+    tokens_test = tokenize_data(tokenizer, X_test, max_length)
 
     # Compile the model
-    loss_function = CategoricalCrossentropy(from_logits=True)
     optim = Adam(learning_rate=5e-5)
-    model.compile(loss=loss_function, optimizer=optim, metrics=['accuracy'])
+    model.compile(optimizer=optim, metrics=['accuracy'])
 
-    # Learning rate scheduler (drops learning rate after a given number of epochs)
+    # Learning rate scheduler
     lr_scheduler = LearningRateScheduler(lambda epoch: lr_schedule(epoch))
 
     # Train the model
-    model.fit(tokens_train, Y_train_bin, validation_data=(tokens_dev, Y_dev_bin),
-              epochs=epochs, batch_size=batch_size, callbacks=[EarlyStopping(patience=5), lr_scheduler])
-
-    # Evaluate the model on the dev set
-    Y_pred = model.predict(tokens_dev)["logits"]
-    Y_pred = np.argmax(Y_pred, axis=1)
-    Y_dev_true = np.argmax(Y_dev_bin, axis=1)
-    evaluate_model(Y_dev_true, Y_pred, encoder)
+    history = model.fit(tokens_train, Y_train_bin, validation_data=(tokens_dev, Y_dev_bin),
+                        epochs=epochs, batch_size=batch_size, callbacks=[EarlyStopping(patience=3), lr_scheduler])
 
     # Evaluate the model on the test set
-    Y_pred_test = model.predict(tokens_test)["logits"]
-    Y_pred_test = np.argmax(Y_pred_test, axis=1)
-    Y_test_true = np.argmax(Y_test_bin, axis=1)
-    evaluate_model(Y_test_true, Y_pred_test, encoder)
+    Y_pred = model.predict(tokens_test)["logits"]
+    Y_pred = np.argmax(Y_pred, axis=1)
 
+    Y_test_true = Y_test_bin
+    accuracy = accuracy_score(Y_test_true, Y_pred)
+    f1 = f1_score(Y_test_true, Y_pred, average='macro')
 
-def evaluate_model(Y_true, Y_pred, encoder):
-    """Print a classification report and confusion matrix for generated labels."""
-    # Classification report
-    print('\n*** CLASSIFICATION REPORT ***')
-    print(classification_report(Y_true, Y_pred))
-
-    # Calculates and print the confusion matrix
-    print('\n*** CONFUSION MATRIX ***')
-    labels = encoder.classes_   # Use the original string labels (not one-hot encoded)
-    cm = confusion_matrix(Y_true, Y_pred, labels=np.arange(len(labels)))
-    print(' '.join(labels))
+    cm = confusion_matrix(Y_test_true, Y_pred)
     print(cm)
 
-    # This will plot the confusion matrix
-    #disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels)
-    #disp.plot(cmap=plt.cm.Blues)
-    #plt.show()
+    print(classification_report(Y_test_true, Y_pred, digits=3))
 
-
-def encode_data(Y_train, Y_dev, Y_test):
-    """Transform string labels to one-hot encodings"""
-    encoder = LabelBinarizer()
-    Y_train_bin = encoder.fit_transform(Y_train)
-    Y_dev_bin = encoder.transform(Y_dev)  # Note: use transform not fit_transform to avoid altering the encoder
-    Y_test_bin = encoder.transform(Y_test)
-
-    return Y_train_bin, Y_dev_bin, Y_test_bin, encoder
-
-
-def tokenize_data(tokenizer, data_file, max_length):
-    """Tokenize a data file with the specified tokenizer"""
-    return tokenizer(data_file, padding=True, max_length=max_length, truncation=True, return_tensors="np").data
+    print(f'Accuracy on validation set with model {model_name}: {accuracy:.3f}')
+    print('Macro f1 on validation set with model:  ', f1)
+    return history
 
 
 def main():
+    # Create argument parser
     args = create_arg_parser()
 
-    # Retrieve commandline model parameters
-    max_length = args.max_length
-    batch_size = args.batch_size
-    epochs = args.epochs
-
-    # Read the data
-    X_train, Y_train = read_corpus(args.train_file)
-    X_dev, Y_dev = read_corpus(args.dev_file)
-    X_test, Y_test = read_corpus(args.test_file)
-
-    Y_train_bin, Y_dev_bin, Y_test_bin, encoder = encode_data(Y_train, Y_dev, Y_test)
-
-    model_names = ["bert-base-uncased"]
+    # Define model names
+    model_names = ["google-bert/bert-base-uncased"]
+    results = {}
 
     for model_name in model_names:
-        # Tokenize the data
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        tokens_train = tokenize_data(tokenizer, X_train, max_length)
-        tokens_dev = tokenize_data(tokenizer, X_dev, max_length)
-        tokens_test = tokenize_data(tokenizer, X_test, max_length)
-
         print(f"Experimenting with model: {model_name}")
-        experiment_with_model(tokens_train, tokens_dev, tokens_test, model_name, batch_size, epochs, Y_train_bin,
-                              Y_dev_bin, Y_test_bin, encoder)
+        history = experiment_with_model(args, model_name=model_name, max_length=128, batch_size=32, epochs=5)
+        results[model_name] = history
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
