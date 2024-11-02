@@ -4,7 +4,7 @@ This repository contains the code for the Learning from Data final project. Thre
 
 ## Datasets
 
-The necessary datasets can be found below. These need to be downloaded and preprocessed to be used.
+The necessary datasets can be found below. These need to be downloaded, preprocessed and added to a `data` folder to be used.
 
 | Dataset    | Link      | Comments |
 | ------------- | ------------- | ------------- |
