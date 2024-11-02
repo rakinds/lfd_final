@@ -28,7 +28,8 @@ Available command-line options:
 * -m Use more MHS training data
 
 Usage example:
-_python3 classic_models.py -o -a_
+
+`python3 classic_models.py -o -a`
 
 ### Bidirectional LSTM
 Available command-line options:
@@ -42,7 +43,8 @@ Available command-line options:
 * -m Use more MHS training data
 
 Usage example:
-_python3 lstm.py -m_
+
+`python3 lstm.py -m`
 
 ### Pretrained models
 Available command-line options:
@@ -52,5 +54,6 @@ Available command-line options:
 * -m Use more OFF training data, MHS (Measuring Hate Speech)
 
 Usage example:
-_python3 pretrained_models.py -e
+
+`python3 pretrained_models.py -e`
 
