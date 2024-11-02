@@ -9,13 +9,9 @@ Available command-line options:
 -p Displays a plotted version of the confusion matrix for the report. May not always work
                              from the commandline if display packages are not installed.
 -a Augmented: run the NB model with augmented features
-
-Baseline usage:
-python3 classic_models.py
-
-How to run best model:
-python3 classic_models.py -a
-
+-o Use more OffensiveLang training data
+-e Use more hate speech in US elections training data
+-m Use more MHS training data
 """
 
 import argparse
@@ -26,9 +22,9 @@ from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 from collections import Counter
-import datasets
 import string
 import re
+import datasets
 
 
 def create_arg_parser():
@@ -43,11 +39,12 @@ def create_arg_parser():
                              "from the commandline if display packages are not installed.")
     parser.add_argument("-a", "--augmented", action="store_true",
                         help="Use the augmented feature set for better performance")
-    parser.add_argument("-m", "--mhs", action="store_true",
-                        help="Use more OFF training data, MHS")
+    parser.add_argument("-o", "--ol", action="store_true",
+                        help="Use more OFF training data, OL")
     parser.add_argument("-e", "--hsuse", action="store_true",
                         help="Use more OFF training data, HSUSE")
-
+    parser.add_argument("-m", "--mhs", action="store_true",
+                        help="Use more OFF training data, MHS")
     return parser.parse_args()
 
 
@@ -71,9 +68,26 @@ def create_new_data(type):
             if counter < 4000 and line[0] >= 0.5:
                 counter += 1
                 cleaned = re.sub('@\w+', '@USER', line[1])
-                cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                cleaned = re.sub(
+                    'https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)',
+                    'URL', cleaned)
                 documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
                 labels.append('OFF')
+
+    elif type == 'ol':
+        # Retrieve dataset
+        counter = 0
+        with open('data/OffensiveLang.csv', encoding='utf-8') as f:
+            for line in f:
+                tokens = line.strip().split(',')
+                if tokens[3] == 'Offensive' and counter < 4000:
+                    counter += 1
+                    cleaned = re.sub('@\w+', '@USER', tokens[0])
+                    cleaned = re.sub(
+                        'https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)',
+                        'URL', cleaned)
+                    documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                    labels.append('OFF')
 
     elif type == 'hsuse':
         counter = 0
@@ -150,6 +164,10 @@ if __name__ == "__main__":
     # Create additional OFF data if argument is given
     if args.mhs:
         X_train_aug, Y_train_aug = create_new_data('mhs')
+        X_train = X_train + X_train_aug
+        Y_train = Y_train + Y_train_aug
+    if args.ol:
+        X_train_aug, Y_train_aug = create_new_data('ol')
         X_train = X_train + X_train_aug
         Y_train = Y_train + Y_train_aug
     elif args.hsuse:
