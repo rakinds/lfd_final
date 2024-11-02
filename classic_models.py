@@ -166,7 +166,7 @@ if __name__ == "__main__":
         X_train_aug, Y_train_aug = create_new_data('mhs')
         X_train = X_train + X_train_aug
         Y_train = Y_train + Y_train_aug
-    if args.ol:
+    elif args.ol:
         X_train_aug, Y_train_aug = create_new_data('ol')
         X_train = X_train + X_train_aug
         Y_train = Y_train + Y_train_aug
