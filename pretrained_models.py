@@ -5,8 +5,9 @@ LfD Final Assignment - Pretrained Models
 
 This script allows the user to run several Pretrained Models on a binary classification task.
 
--e Use more OFF training data, HSUSE
--m Use more OFF training data, MHS
+-e Use more OFF training data, HSUSE (Hate Speech in US Elections)
+-o Use more OFF training data, OL (OffensiveLang)
+-m Use more OFF training data, MHS (Measuring Hate Speech)
 
 Necessary versions:
 !pip install tensorflow==2.15.0
@@ -25,6 +26,7 @@ import tensorflow as tf
 from transformers import TFAutoModelForSequenceClassification, AutoTokenizer
 from tensorflow.keras.optimizers import Adam, RMSprop
 from tensorflow.keras.callbacks import EarlyStopping, LearningRateScheduler
+import datasets
 
 # Make reproducible
 np.random.seed(1234)
@@ -35,10 +37,12 @@ random.seed(1234)
 def create_arg_parser():
     """Creates argumentparser and defines command-line options that can be called upon."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--mhs", action="store_true",
-                        help="Use more OFF training data, MHS")
     parser.add_argument("-e", "--hsuse", action="store_true",
                         help="Use more OFF training data, HSUSE")
+    parser.add_argument("-o", "--ol", action="store_true",
+                        help="Use more OFF training data, OL")
+    parser.add_argument("-m", "--mhs", action="store_true",
+                        help="Use more OFF training data, MHS")
 
     return parser.parse_args()
 
@@ -63,9 +67,26 @@ def create_new_data(type):
             if counter < 4000 and line[0] >= 0.5:
                 counter += 1
                 cleaned = re.sub('@\w+', '@USER', line[1])
-                cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                cleaned = re.sub(
+                    'https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)',
+                    'URL', cleaned)
                 documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
                 labels.append('OFF')
+
+    elif type == 'ol':
+        # Retrieve dataset
+        counter = 0
+        with open('data/OffensiveLang.csv', encoding='utf-8') as f:
+            for line in f:
+                tokens = line.strip().split(',')
+                if tokens[3] == 'Offensive' and counter < 4000:
+                    counter += 1
+                    cleaned = re.sub('@\w+', '@USER', tokens[0])
+                    cleaned = re.sub(
+                        'https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)',
+                        'URL', cleaned)
+                    documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                    labels.append('OFF')
 
     elif type == 'hsuse':
         counter = 0
@@ -120,6 +141,10 @@ def experiment_with_model(args, model_name, max_length, batch_size, epochs):
         X_train_aug, Y_train_aug = create_new_data('mhs')
         X_train = X_train + X_train_aug
         Y_train = Y_train + Y_train_aug
+    elif args.ol:
+        X_train_aug, Y_train_aug = create_new_data('ol')
+        X_train = X_train + X_train_aug
+        Y_train = Y_train + Y_train_aug
     elif args.hsuse:
         X_train_aug, Y_train_aug = create_new_data('hsuse')
         X_train = X_train + X_train_aug
@@ -170,7 +195,7 @@ def main():
     args = create_arg_parser()
 
     # Define model names
-    model_names = ["google-bert/bert-base-uncased"]
+    model_names = ["google-bert/bert-base-uncased", "distilbert/distilbert-base-uncased", "FacebookAI/roberta-base", "microsoft/deberta-v3-base"]
     results = {}
 
     for model_name in model_names:

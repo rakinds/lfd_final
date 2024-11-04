@@ -11,7 +11,9 @@ Available command-line options:
 -d  Separate dev set to read in (default data/dev.tsv)
 -t  If added, use trained model to predict on test set
 -e  Embedding file we are using (default data/cc.en.300.vec)
--m  Use more data (the MHS dataset)
+-o  Use more training data (the OffensiveLang dataset)
+--hsuse Use more training data (HSUSE)
+-m Use more MHS training data
 
 """
 
@@ -24,8 +26,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelBinarizer
 from tensorflow.keras.optimizers import SGD, RMSprop
 from tensorflow.keras.layers import TextVectorization
-from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
-import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
 import string
 import datasets
@@ -48,10 +49,12 @@ def create_arg_parser():
                         help="If added, use trained model to predict on test set")
     parser.add_argument("-e", "--embeddings", default='data/cc.en.300.vec', type=str,
                         help="Embedding file we are using (default data/cc.en.300.vec)")
-    parser.add_argument("-m", "--mhs", action="store_true",
-                        help="Use more OFF training data, MHS")
+    parser.add_argument("-o", "--ol", action="store_true",
+                        help="Use more OFF training data, OL")
     parser.add_argument("--hsuse", action="store_true",
                         help="Use more OFF training data, HSUSE")
+    parser.add_argument("-m", "--mhs", action="store_true",
+                        help="Use more OFF training data, MHS")
     args = parser.parse_args()
     return args
 
@@ -76,9 +79,26 @@ def create_new_data(type):
             if counter < 4000 and line[0] >= 0.5:
                 counter += 1
                 cleaned = re.sub('@\w+', '@USER', line[1])
-                cleaned = re.sub('https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)', 'URL', cleaned)
+                cleaned = re.sub(
+                    'https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)',
+                    'URL', cleaned)
                 documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
                 labels.append('OFF')
+
+    elif type == 'ol':
+        # Retrieve dataset
+        counter = 0
+        with open('data/OffensiveLang.csv', encoding='utf-8') as f:
+            for line in f:
+                tokens = line.strip().split(',')
+                if tokens[3] == 'Offensive' and counter < 4000:
+                    counter += 1
+                    cleaned = re.sub('@\w+', '@USER', tokens[0])
+                    cleaned = re.sub(
+                        'https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)',
+                        'URL', cleaned)
+                    documents.append(cleaned.translate(str.maketrans('', '', string.punctuation)))
+                    labels.append('OFF')
 
     elif type == 'hsuse':
         counter = 0
@@ -218,6 +238,10 @@ def main():
     # Create additional OFF data if argument is given
     if args.mhs:
         X_train_aug, Y_train_aug = create_new_data('mhs')
+        X_train = X_train + X_train_aug
+        Y_train = Y_train + Y_train_aug
+    elif args.ol:
+        X_train_aug, Y_train_aug = create_new_data('ol')
         X_train = X_train + X_train_aug
         Y_train = Y_train + Y_train_aug
     elif args.hsuse:
